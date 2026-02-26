@@ -15,8 +15,21 @@ interface PromptTemplate {
   [key: string]: unknown;
 }
 
+interface Skill {
+  name: string;
+  description: string;
+  triggers: string[];
+  content: string;
+  [key: string]: unknown;
+}
+
 interface TemplateMetadata {
   description?: string;
+}
+
+interface SkillMetadata {
+  description?: string;
+  triggers?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -24,6 +37,10 @@ interface TemplateMetadata {
 const TEMPLATES_DIR = process.env.TEMPLATES_DIR
   ? path.resolve(process.env.TEMPLATES_DIR)
   : path.join(process.cwd(), "templates");
+
+const SKILLS_DIR = process.env.SKILLS_DIR
+  ? path.resolve(process.env.SKILLS_DIR)
+  : path.join(process.cwd(), "skills");
 
 const VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
 
@@ -40,7 +57,6 @@ function extractVariables(content: string): string[] {
 }
 
 function parseTemplateMetadata(content: string): { metadata: TemplateMetadata; body: string } {
-  // Support optional frontmatter: <!-- description: ... -->
   const frontmatterMatch = content.match(/^<!--\s*([\s\S]*?)\s*-->\n?([\s\S]*)$/);
   if (!frontmatterMatch) {
     return { metadata: {}, body: content };
@@ -86,6 +102,70 @@ function renderTemplate(content: string, variables: Record<string, string>): str
   return content.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
     return key in variables ? variables[key] : match;
   });
+}
+
+// ─── Skill Loader ─────────────────────────────────────────────────────────────
+
+function parseSkillMetadata(content: string): { metadata: SkillMetadata; body: string } {
+  // Support YAML-style frontmatter: --- ... ---
+  const yamlMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+  if (yamlMatch) {
+    const rawMeta = yamlMatch[1];
+    const body = yamlMatch[2];
+    const metadata: SkillMetadata = {};
+
+    const descMatch = rawMeta.match(/description:\s*(.+)/);
+    if (descMatch) metadata.description = descMatch[1].trim();
+
+    const triggersMatch = rawMeta.match(/triggers:\s*(.+)/);
+    if (triggersMatch) metadata.triggers = triggersMatch[1].trim();
+
+    return { metadata, body };
+  }
+
+  // Fallback: HTML comment frontmatter (same as templates)
+  const commentMatch = content.match(/^<!--\s*([\s\S]*?)\s*-->\n?([\s\S]*)$/);
+  if (commentMatch) {
+    const rawMeta = commentMatch[1];
+    const body = commentMatch[2];
+    const metadata: SkillMetadata = {};
+
+    const descMatch = rawMeta.match(/description:\s*(.+)/);
+    if (descMatch) metadata.description = descMatch[1].trim();
+
+    return { metadata, body };
+  }
+
+  return { metadata: {}, body: content };
+}
+
+function loadSkill(filePath: string): Skill {
+  const raw = fs.readFileSync(filePath, "utf-8");
+  const name = path.basename(filePath, ".md");
+  const { metadata, body } = parseSkillMetadata(raw);
+
+  const triggers = metadata.triggers
+    ? metadata.triggers.split(",").map((t) => t.trim())
+    : [];
+
+  return {
+    name,
+    description: metadata.description ?? `Skill: ${name}`,
+    triggers,
+    content: body,
+  };
+}
+
+function loadAllSkills(): Skill[] {
+  if (!fs.existsSync(SKILLS_DIR)) {
+    console.error(`Skills directory not found: ${SKILLS_DIR}`);
+    return [];
+  }
+
+  return fs
+    .readdirSync(SKILLS_DIR)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => loadSkill(path.join(SKILLS_DIR, f)));
 }
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
@@ -259,7 +339,6 @@ Errors:
     const template = loadTemplate(filePath);
     const rendered = renderTemplate(template.content, variables);
 
-    // Find which variables were not resolved
     const unresolved = template.variables.filter((v) => !(v in variables));
 
     const output = { name, rendered, unresolved };
@@ -307,6 +386,145 @@ Returns the updated list of templates after reload.`,
   }
 );
 
+// ─── Skills Tools ─────────────────────────────────────────────────────────────
+
+// Tool: List all available skills
+server.registerTool(
+  "skills_list_skills",
+  {
+    title: "List Skills",
+    description: `List all available skills loaded from the skills directory.
+
+Returns each skill's name, description, and trigger keywords.
+
+Returns:
+{
+  "skills": [
+    {
+      "name": string,       // Skill filename without .md extension
+      "description": string,
+      "triggers": string[]  // Keywords indicating when to use this skill
+    }
+  ],
+  "count": number
+}`,
+    inputSchema: z.object({}),
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async () => {
+    const skills = loadAllSkills();
+    const output = {
+      skills: skills.map(({ name, description, triggers }) => ({
+        name,
+        description,
+        triggers,
+      })),
+      count: skills.length,
+    };
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+      structuredContent: output,
+    };
+  }
+);
+
+// Tool: Get raw skill content
+server.registerTool(
+  "skills_get_skill",
+  {
+    title: "Get Skill",
+    description: `Retrieve the full content of a specific skill by name.
+
+Args:
+  - name (string): Skill name (filename without .md extension, e.g. "docx")
+
+Returns:
+{
+  "name": string,
+  "description": string,
+  "triggers": string[],
+  "content": string   // Full skill instructions in markdown
+}
+
+Errors:
+  - Returns error if skill name is not found`,
+    inputSchema: z.object({
+      name: z.string().min(1).describe("Skill name (without .md extension)"),
+    }),
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ name }) => {
+    const filePath = path.join(SKILLS_DIR, `${name}.md`);
+
+    if (!fs.existsSync(filePath)) {
+      const available = loadAllSkills().map((s) => s.name).join(", ");
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: Skill "${name}" not found. Available skills: ${available || "none"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const skill = loadSkill(filePath);
+    return {
+      content: [{ type: "text", text: JSON.stringify(skill, null, 2) }],
+      structuredContent: skill,
+    };
+  }
+);
+
+// Tool: Reload skills from disk (without restarting)
+server.registerTool(
+  "skills_reload_skills",
+  {
+    title: "Reload Skills",
+    description: `Reload all skills from the skills directory on disk.
+
+Use this after adding, editing, or removing .md skill files — no server restart needed.
+
+Returns the updated list of skills after reload.`,
+    inputSchema: z.object({}),
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async () => {
+    const skills = loadAllSkills();
+    const output = {
+      message: `Reloaded ${skills.length} skills from ${SKILLS_DIR}`,
+      skills: skills.map(({ name, description, triggers }) => ({
+        name,
+        description,
+        triggers,
+      })),
+      count: skills.length,
+    };
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+      structuredContent: output,
+    };
+  }
+);
+
 // ─── HTTP Transport ───────────────────────────────────────────────────────────
 
 async function runHTTP(): Promise<void> {
@@ -316,7 +534,14 @@ async function runHTTP(): Promise<void> {
   // Health check
   app.get("/health", (_req: Request, res: Response) => {
     const templates = loadAllTemplates();
-    res.json({ status: "ok", templates_loaded: templates.length, templates_dir: TEMPLATES_DIR });
+    const skills = loadAllSkills();
+    res.json({
+      status: "ok",
+      templates_loaded: templates.length,
+      templates_dir: TEMPLATES_DIR,
+      skills_loaded: skills.length,
+      skills_dir: SKILLS_DIR,
+    });
   });
 
   app.post("/mcp", async (req: Request, res: Response) => {
@@ -335,6 +560,9 @@ async function runHTTP(): Promise<void> {
     console.error(`Templates directory: ${TEMPLATES_DIR}`);
     const templates = loadAllTemplates();
     console.error(`Loaded ${templates.length} template(s): ${templates.map((t) => t.name).join(", ") || "none"}`);
+    console.error(`Skills directory: ${SKILLS_DIR}`);
+    const skills = loadAllSkills();
+    console.error(`Loaded ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ") || "none"}`);
   });
 }
 
