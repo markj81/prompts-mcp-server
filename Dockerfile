@@ -26,9 +26,13 @@ COPY --from=builder /app/dist ./dist
 # Copy default templates (can be overridden by a mounted volume)
 COPY templates/ ./templates/
 
+# Copy skills
+COPY skills/ ./skills/
+
 # Railway / other platforms inject PORT at runtime
 ENV PORT=3000
 ENV TEMPLATES_DIR=/app/templates
+ENV SKILLS_DIR=/app/skills
 
 EXPOSE 3000
 
