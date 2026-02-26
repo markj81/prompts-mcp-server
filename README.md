@@ -1,6 +1,52 @@
 # prompts-mcp-server
 
-MCP server for reusable prompt templates loaded from markdown files. Templates support `{{variable}}` placeholder substitution and are hot-reloadable without restarting the server.
+## Stop Copy-Pasting Prompts
+
+Every team that uses AI seriously eventually hits the same wall.
+
+Someone writes a brilliant prompt for reviewing pull requests. It lives in their notes app. A colleague asks for it, gets it over Slack, tweaks it slightly, saves their own version. Three months later there are six variants floating around, nobody knows which is current, and half the team isn't using any of them because they never got the memo.
+
+This is the prompt sprawl problem. And it's more damaging than it looks.
+
+### What's Actually at Stake
+
+Prompts are intellectual property. When your team figures out how to reliably get a certain quality of output from an AI — a code review that catches the right things, a summary that hits the right level of detail, a customer email that lands the right tone — that's hard-won knowledge. It deserves to be treated like shared infrastructure, not a sticky note.
+
+The cost of sprawl isn't just inconsistency. It's:
+
+- **Onboarding friction** — new team members improvise instead of inheriting what works
+- **Quality variance** — the same task done ten different ways produces ten different quality levels
+- **Lost iteration** — when someone improves a prompt, nobody else gets the benefit
+- **No history** — you can't see what changed, when, or why
+
+### Prompts as Shared Infrastructure
+
+The fix is straightforward: treat your best prompts the way you treat your best code. Put them in one place, version them, and make them available to everyone.
+
+This MCP server does exactly this. Your templates live in a repository as plain markdown files — readable by anyone, editable like any other text, reviewed like any other change. When someone improves the code review prompt, they open a pull request. The team discusses it. It merges. Everyone gets the update automatically.
+
+No Slack messages. No "which version are you on?" No copy-pasting.
+
+### Variables, Not Walls of Text
+
+Good shared prompts aren't static. They have placeholders — `{{language}}`, `{{tone}}`, `{{context}}` — that let you apply the same structure to different situations without rewriting from scratch.
+
+Think of it like a form. The *shape* of what makes a good code review is stable. The language, the codebase, the specific focus area — those change every time. With variable substitution, your team maintains one high-quality template and fills in the blanks, rather than maintaining dozens of near-identical variants.
+
+### One Source, Every Tool
+
+The other problem with prompts living in notes apps and Slack threads is that they're tied to one person's workflow. This server means the same templates are available in every tool that speaks MCP — your terminal, your editor, your desktop app. Write the prompt once, use it everywhere.
+
+### The Practical Upside
+
+When prompts are shared infrastructure:
+
+- A new hire can be productive on day one — the team's best patterns are right there
+- Quality becomes consistent and ratchets upward — improvements compound
+- You can actually measure what works — when everyone uses the same templates, you can compare results and iterate deliberately
+- Ownership is clear — templates are in version control, with authors, history, and review
+
+---
 
 ## Setup
 
@@ -64,13 +110,19 @@ More content referencing {{another_variable}}.
 }
 ```
 
+## Connecting to Claude Code
+
+```bash
+claude mcp add --transport http prompts https://your-app.up.railway.app/mcp
+```
+
 ## Claude Desktop Config
 
 ```json
 {
   "mcpServers": {
     "prompts": {
-      "url": "http://localhost:3000/mcp"
+      "url": "https://your-app.up.railway.app/mcp"
     }
   }
 }
@@ -99,18 +151,6 @@ git push -u origin main
 ### 3. Get your public URL
 
 Railway assigns a URL — enable it under your service → **Settings → Networking → Generate Domain**.
-
-Update your MCP client config:
-
-```json
-{
-  "mcpServers": {
-    "prompts": {
-      "url": "https://your-app.up.railway.app/mcp"
-    }
-  }
-}
-```
 
 ### Environment variables (optional)
 
